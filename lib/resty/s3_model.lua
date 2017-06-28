@@ -1,4 +1,5 @@
 local s2xml = require('s2xml')
+local strutil = require('acid.strutil')
 local tableutil = require('acid.tableutil')
 local _M = {}
 
@@ -301,7 +302,7 @@ local function parse_get_object_response(http_response)
 
     response.Metadata = {}
     for k, v in pairs(lower_headers) do
-        if string.sub(k, 1, #meta_prefix) == meta_prefix then
+        if strutil.startswith(k, meta_prefix) then
             local meta_name = string.sub(k, #meta_prefix + 1)
             response.Metadata[meta_name] = v
         end
