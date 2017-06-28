@@ -182,28 +182,7 @@ local function parse_error(body)
 end
 
 
-function _M.do_client_method(self, params, method_model, opts)
-    opts = opts or {}
-    if type(opts) ~= 'table' then
-        return nil, 'InvalidArgument', string.format(
-                'invalid opts: %s, is not a table, is type: %s',
-                tostring(opts), type(opts))
-    end
-
-    params = params or {}
-    if type(params) ~= 'table' then
-        return nil, 'InvalidArgument', string.format(
-                'invalid params: %s, is not a table, is type: %s',
-                tostring(params), type(params))
-    end
-
-    local _, err, errmsg = arg_checker.check_arguments(
-            params, method_model.params_schema)
-    if err ~= nil then
-        return nil, 'InvalidArgument', string.format(
-                'invalid params: %s, %s', err, errmsg)
-    end
-
+function _M.get_signed_request(self, params, method_model, opts)
     local uri, err, errmsg = method_model.generate_uri(params)
     if err ~= nil then
         return nil, err, errmsg
@@ -266,14 +245,14 @@ function _M.do_client_method(self, params, method_model, opts)
         return nil, err, errmsg
     end
 
-    local resp, err, errmsg = self:do_request(request.verb,
-                                              request.uri,
-                                              request.headers,
-                                              body)
-    if err ~= nil then
-        return nil, err, errmsg
-    end
+    request.body = body
+    request.auth_ctx = auth_ctx
 
+    return request, nil, nil
+end
+
+
+local function parse_http_response(resp, params, method_model, auth_ctx)
     if resp.status ~= method_model.status_code then
         local resp_body, err, errmsg = resp.body.read(1024 * 1024)
         if err ~= nil then
@@ -298,6 +277,52 @@ function _M.do_client_method(self, params, method_model, opts)
     end
 
     local response, err, errmsg = method_model.parse_response(resp, params)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
+
+    return response, nil, nil
+end
+
+
+function _M.do_client_method(self, params, method_model, opts)
+    opts = opts or {}
+    if type(opts) ~= 'table' then
+        return nil, 'InvalidArgument', string.format(
+                'invalid opts: %s, is not a table, is type: %s',
+                tostring(opts), type(opts))
+    end
+
+    params = params or {}
+    if type(params) ~= 'table' then
+        return nil, 'InvalidArgument', string.format(
+                'invalid params: %s, is not a table, is type: %s',
+                tostring(params), type(params))
+    end
+
+    local _, err, errmsg = arg_checker.check_arguments(
+            params, method_model.params_schema)
+    if err ~= nil then
+        return nil, 'InvalidArgument', string.format(
+                'invalid params: %s, %s', err, errmsg)
+    end
+
+    local request, err, errmsg = self:get_signed_request(
+            params, method_model, opts)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
+
+    local resp, err, errmsg = self:do_request(request.verb,
+                                              request.uri,
+                                              request.headers,
+                                              request.body)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
+
+    local response, err, errmsg = parse_http_response(
+            resp, params, method_model, request.auth_ctx)
     if err ~= nil then
         return nil, err, errmsg
     end
