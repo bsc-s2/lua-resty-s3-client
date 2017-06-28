@@ -25,7 +25,7 @@ function _M.new(access_key, secret_key, endpoint, client_opts)
     client_opts = client_opts or {}
     if type(client_opts) ~= 'table' then
         return nil, 'InvalidArgument', string.format(
-                'invalid client_opts: %s, is not a table, is tyep: %s',
+                'invalid client_opts: %s, is not a table, is type: %s',
                 tostring(client_opts), type(client_opts))
     end
 
