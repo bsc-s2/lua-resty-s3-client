@@ -1,9 +1,31 @@
 local s2xml = require('s2xml')
+local tableutil = require('acid.tableutil')
 local _M = {}
 
 local meta_prefix = 'x-amz-meta-'
 local date_format = '!%a, %d %b %Y %T GMT'
 
+local empty_schema = {
+    checker = {
+    },
+}
+
+local string_schema = {
+    checker = {
+        ['type'] = 'string',
+    },
+}
+
+local number_schema = {
+    checker = {
+        {
+            ['type'] = 'integer',
+        },
+        {
+            ['type'] = 'float',
+        },
+    },
+}
 
 _M.canned_acl = {
     ['private']=true,
@@ -73,7 +95,8 @@ local function generate_args_from_params(params)
     for name, value in pairs(params) do
         local parameter_model = _M.parameters[name]
         if parameter_model.add_query_args ~= nil then
-            local _, err, errmsg = parameter_model.add_query_args(query_args, name, value)
+            local _, err, errmsg = parameter_model.add_query_args(
+                    query_args, name, value)
             if err ~= nil then
                 return nil, err, errmsg
             end
@@ -95,7 +118,8 @@ local function generate_headers_from_params(params)
     for name, value in pairs(params) do
         local parameter_model = _M.parameters[name]
         if parameter_model.add_headers ~= nil then
-            local _, err, errmsg = parameter_model.add_headers(headers, name, value)
+            local _, err, errmsg = parameter_model.add_headers(
+                    headers, name, value)
             if err ~= nil then
                 return nil, err, errmsg
             end
@@ -117,17 +141,6 @@ local function generate_upload_body(params)
         return body, nil, nil
     end
 
-    if type(body) ~= 'table' then
-        return nil, 'InvalidArgument',
-                'parameter Body must be a string or a table'
-    end
-
-    if type(body.file_path) ~= 'string' then
-        return nil, 'InvalidInputBody', string.format(
-                'parameter Body contain invalid file_path: %s, type is: %s',
-                tostring(body.file_path), type(body.file_path))
-    end
-
     local file_handle, err = io.open(body.file_path, 'rb')
     if err ~= nil then
         return nil, 'OpenFileError', string.format(
@@ -147,18 +160,7 @@ local function generate_put_acl_body(params)
         return '', nil, nil
     end
 
-    if type(acp) ~= 'table' then
-        return nil, 'InvalidArgument', string.format(
-                'invalid AccessControlPolicy: %s, is not a table',
-                tostring(acp))
-    end
-
     local grants = acp.Grants
-    if type(grants) ~= 'table' then
-        return nil, 'InvalidArgument', string.format(
-                'invalid AccessControlPolicy Grants: %s, is not a table',
-                tostring(grants))
-    end
 
     local standared_acp = {
         __attr = {
@@ -171,21 +173,10 @@ local function generate_put_acl_body(params)
     }
 
     for _, grant in ipairs(grants) do
-        if type(grant) ~= 'table' then
-            return nil, 'InvalidArgument', string.format(
-                    'invalid AccessControlPolicy Grant: %s, is not a table',
-                    tostring(grant))
-        end
-
         local standared_grant = {}
         standared_grant.Permission = grant.Permission
 
         local grantee = grant.Grantee
-        if type(grantee) ~= 'table' then
-            return nil, 'InvalidArgument', string.format(
-                    'invalid AccessControlPolicy Grantee: %s, is not a table',
-                    tostring(grant))
-        end
 
         standared_grant.Grantee = {
             __attr = {
@@ -216,67 +207,6 @@ local function generate_put_acl_body(params)
     end
 
     return xml_acp, nil, nil
-end
-
-
-local function check_any()
-    return true, nil, nil
-end
-
-
-local function check_string(value)
-    if type(value) ~= 'string' then
-        return nil, 'InvalidArgument', string.format(
-                '%s is not a sting, is type: %s',
-                tostring(value), type(value))
-    end
-
-    return true, nil, nil
-end
-
-
-local function check_number(value)
-    if type(value) ~= 'number' then
-        return nil, 'InvalidArgument', string.format(
-                '%s is not a number, is type: %s',
-                tostring(value), type(value))
-    end
-
-    return true, nil, nil
-end
-
-
-local function check_canned_acl(value)
-    if _M.canned_acl[value] ~= true then
-        return nil, 'InvalidCannedACL', string.format(
-                'invalid canned acl: %s', value)
-    end
-    return true, nil, nil
-end
-
-
-local function check_metadata(value)
-    if type(value) ~= 'table' then
-        return nil, 'InvalidArgument', string.format(
-                'parameter Metadata: %s, is not a table, is type: %s',
-                tostring(value), type(value))
-    end
-
-    for k, v in pairs(value) do
-        if type(k) ~= 'string' then
-            return nil, 'InvalidArgument', string.format(
-                    'metadata name: %s, is not a string, is type: %s',
-                    tostring(k), type(k))
-        end
-
-        if type(v) ~= 'string' then
-            return nil, 'InvalidArgument', string.format(
-                    'metadata value: %s, is not a string, is type: %s',
-                    tostring(v), type(v))
-        end
-    end
-
-    return true, nil, nil
 end
 
 
@@ -314,11 +244,8 @@ local function add_copy_source_header(headers, name, value)
     local header_name = _M.param_to_header_name[name]
     if type(value) == 'string' then
         headers[header_name] = value
-    elseif type(value) == 'table' then
-        headers[header_name] = string.format('%s/%s', value.Bucket, value.Key)
     else
-        return nil, 'InvalidArgument', string.format(
-                'invalid CopySource parameter: %s', tostring(value))
+        headers[header_name] = string.format('%s/%s', value.Bucket, value.Key)
     end
 
     return true, nil, nil
@@ -566,155 +493,280 @@ local function parse_get_acl_response(http_response)
 end
 
 
-function _M.check_params(params, method_model)
-    for _, parameter_name in ipairs(method_model.required_params) do
-        if params[parameter_name] == nil then
-            return nil, 'InvalidArgument', string.format(
-                    'missing required parameter: %s', parameter_name)
-        end
-    end
-
-    for name, value in pairs(params) do
-        if method_model.all_valid_params[name] == nil then
-            return nil, 'InvalidArgument', string.format(
-                    'invalid parameter: %s', name)
-        end
-
-        local _, err, errmsg = _M.parameters[name].check(value)
-        if err ~= nil then
-            return nil, err, errmsg
-        end
-    end
-end
+local grant_checker_schema = {
+    ['type']='dict',
+    sub_schema={
+        Permission={
+            required=true,
+            checker={
+                ['type']='string',
+                enum={'FULL_CONTROL',
+                      'WRITE',
+                      'WRITE_ACP',
+                      'READ',
+                      'READ_ACP',},
+            },
+        },
+        Grantee={
+            required=true,
+            checker={
+                ['type']='dict',
+                sub_schema={
+                    Type={
+                        required=true,
+                        checker={
+                            ['type']='string',
+                            enum={'CanonicalUser',
+                                  'AmazonCustomerByEmail',
+                                  'Group',},
+                        },
+                    },
+                    DisplayName={
+                        checker={
+                            ['type']='string',
+                        },
+                    },
+                    ID={
+                        checker={
+                            ['type']='string',
+                        },
+                    },
+                    EmailAddress={
+                        checker={
+                            ['type']='string',
+                        },
+                    },
+                    URI={
+                        checker={
+                            ['type']='string',
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
 
 
 _M.parameters = {
     Bucket={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=nil,
     },
     Key={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=nil,
     },
     Body={
-        check=check_any,
+        schema={
+            checker={
+                {
+                    ['type']='string',
+                },
+                {
+                    ['type']='dict',
+                    sub_schema={
+                        file_path={
+                            required=true,
+                            checker={
+                                ['type']='string',
+                            },
+                        }
+                    },
+                }
+            },
+        },
         add_query_args=nil,
         add_headers=nil,
     },
     ACL={
-        check=check_canned_acl,
+        schema={
+            checker={
+                ['type']='string',
+                enum={'private', 'public-read',
+                      'public-read-write', 'authenticated-read'},
+            },
+        },
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     ContentType={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     ContentMD5={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     GrantRead={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     GrantReadACP={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     GrantWrite={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     GrantWriteACP={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     GrantFullControl={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     Metadata={
-        check=check_metadata,
+        schema={
+            checker={
+                ['type']='dict',
+                key_checker={
+                    ['type']='string',
+                },
+                value_checker={
+                    ['type']='string',
+                },
+            },
+        },
         add_query_args=nil,
         add_headers=add_metadata_headers,
     },
     Delimiter={
-        check=check_string,
+        schema=string_schema,
         add_query_args=common_add_param_arg,
         add_headers=nil,
     },
     EncodingType={
-        check=check_string,
+        schema=string_schema,
         add_query_args=common_add_param_arg,
         add_headers=nil,
     },
     Marker={
-        check=check_string,
+        schema=string_schema,
         add_query_args=common_add_param_arg,
         add_headers=nil,
     },
     MaxKeys={
-        check=check_number,
+        schema=number_schema,
         add_query_args=common_add_param_arg,
         add_headers=nil,
     },
     Prefix={
-        check=check_string,
+        schema=string_schema,
         add_query_args=common_add_param_arg,
         add_headers=nil,
     },
     CopySource={
-        check=check_any,
+        schema={
+            checker={
+                {
+                    ['type']='string',
+                },
+                {
+                    ['type']='dict',
+                    sub_schema={
+                        Bucket={
+                            required=true,
+                            checker={
+                                ['type']='string',
+                            },
+                        },
+                        Key={
+                            required=true,
+                            checker={
+                                ['type']='string',
+                            },
+                        },
+                    },
+                }
+            },
+        },
         add_query_args=nil,
         add_headers=add_copy_source_header,
     },
     CopySourceIfMatch={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     CopySourceIfNoneMatch={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     CopySourceIfModifiedSince={
-        check=check_number,
+        schema=number_schema,
         add_query_args=nil,
         add_headers=add_date_header,
     },
     CopySourceIfUnmodifiedSince={
-        check=check_number,
+        schema=number_schema,
         add_query_args=nil,
         add_headers=add_date_header,
     },
     MetadataDirective={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=common_add_param_header,
     },
     Filename={
-        check=check_string,
+        schema=string_schema,
         add_query_args=nil,
         add_headers=nil,
     },
     AccessControlPolicy={
-        check=check_any,
+        schema={
+            checker={
+                ['type']='dict',
+                sub_schema={
+                    Owner={
+                        required=true,
+                        checker={
+                            ['type']='dict',
+                            sub_schema={
+                                ID={
+                                    required=true,
+                                    checker={
+                                        ['type']='string',
+                                    },
+                                },
+                                DisplayName={
+                                    checker={
+                                        ['type']='string',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    Grants={
+                        required=true,
+                        checker={
+                            ['type']='array',
+                            element_checker=grant_checker_schema
+                        },
+                    },
+                },
+            },
+        },
         add_query_args=nil,
         add_headers=nil,
     },
-
+    VersionId={
+        schema=string_schema,
+        add_query_args=common_add_param_arg,
+        add_headers=nil,
+    },
 }
 
 
@@ -724,13 +776,11 @@ _M.methods = {}
 _M.methods.get_object = {
     verb = 'GET',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_empty_headers,
@@ -743,22 +793,20 @@ _M.methods.get_object = {
 _M.methods.put_object = {
     verb = 'PUT',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-        'Body',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
-        Body=true,
-        ACL=true,
-        ContentType=true,
-        GrantRead=true,
-        GrantReadACP=true,
-        GrantWriteACP=true,
-        GrantFullControl=true,
-        Metadata=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
+        Body=tableutil.update({required=true},
+                               _M.parameters.Body.schema),
+        ACL=_M.parameters.ACL.schema,
+        ContentType=_M.parameters.ContentType.schema,
+        GrantRead=_M.parameters.GrantRead.schema,
+        GrantReadACP=_M.parameters.GrantReadACP.schema,
+        GrantWriteACP=_M.parameters.GrantWriteACP.schema,
+        GrantFullControl=_M.parameters.GrantFullControl.schema,
+        Metadata=_M.parameters.Metadata.schema,
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_headers_from_params,
@@ -771,13 +819,11 @@ _M.methods.put_object = {
 _M.methods.delete_object = {
     verb = 'DELETE',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_empty_headers,
@@ -790,27 +836,27 @@ _M.methods.delete_object = {
 _M.methods.copy_object = {
     verb = 'PUT',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-        'CopySource',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
-        CopySource=true,
-        CopySourceIfMatch=true,
-        CopySourceIfModifiedSince=true,
-        CopySourceIfNoneMatch=true,
-        CopySourceIfUnmodifiedSince=true,
-        ACL=true,
-        ContentType=true,
-        GrantRead=true,
-        GrantReadACP=true,
-        GrantWriteACP=true,
-        GrantFullControl=true,
-        Metadata=true,
-        MetadataDirective=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
+        CopySource=tableutil.update({required=true},
+                                    _M.parameters.CopySource.schema),
+        CopySourceIfMatch=_M.parameters.CopySourceIfMatch.schema,
+        CopySourceIfModifiedSince=
+                _M.parameters.CopySourceIfModifiedSince.schema,
+        CopySourceIfNoneMatch=_M.parameters.CopySourceIfNoneMatch.schema,
+        CopySourceIfUnmodifiedSince=
+                _M.parameters.CopySourceIfUnmodifiedSince.schema,
+        ACL=_M.parameters.ACL.schema,
+        ContentType=_M.parameters.ContentType.schema,
+        GrantRead=_M.parameters.GrantRead.schema,
+        GrantReadACP=_M.parameters.GrantReadACP.schema,
+        GrantWriteACP=_M.parameters.GrantWriteACP.schema,
+        GrantFullControl=_M.parameters.GrantFullControl.schema,
+        Metadata=_M.parameters.Metadata.schema,
+        MetadataDirective=_M.parameters.MetadataDirective.schema,
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_headers_from_params,
@@ -823,17 +869,15 @@ _M.methods.copy_object = {
 _M.methods.create_bucket= {
     verb = 'PUT',
     generate_uri = generate_bucket_uri,
-    required_params = {
-        'Bucket',
-    },
-    all_valid_params = {
-        Bucket=true,
-        ACL=true,
-        GrantRead=true,
-        GrantReadACP=true,
-        GrantWrite=true,
-        GrantWriteACP=true,
-        GrantFullControl=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        ACL=_M.parameters.ACL.schema,
+        GrantRead=_M.parameters.GrantRead.schema,
+        GrantReadACP=_M.parameters.GrantReadACP.schema,
+        GrantWrite=_M.parameters.GrantWrite.schema,
+        GrantWriteACP=_M.parameters.GrantWriteACP.schema,
+        GrantFullControl=_M.parameters.GrantFullControl.schema,
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_headers_from_params,
@@ -846,11 +890,9 @@ _M.methods.create_bucket= {
 _M.methods.delete_bucket= {
     verb = 'DELETE',
     generate_uri = generate_bucket_uri,
-    required_params = {
-        'Bucket',
-    },
-    all_valid_params = {
-        Bucket=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_empty_headers,
@@ -863,16 +905,14 @@ _M.methods.delete_bucket= {
 _M.methods.list_objects= {
     verb = 'GET',
     generate_uri = generate_bucket_uri,
-    required_params = {
-        'Bucket',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Delimiter=true,
-        EncodingType=true,
-        Marker=true,
-        MaxKeys=true,
-        Prefix=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Delimiter=_M.parameters.Delimiter.schema,
+        EncodingType=_M.parameters.EncodingType.schema,
+        Marker=_M.parameters.Marker.schema,
+        MaxKeys=_M.parameters.MaxKeys.schema,
+        Prefix=_M.parameters.Prefix.schema,
     },
     generate_query_args = generate_args_from_params,
     generate_headers = generate_empty_headers,
@@ -885,18 +925,16 @@ _M.methods.list_objects= {
 _M.methods.put_bucket_acl = {
     verb = 'PUT',
     generate_uri = generate_bucket_uri,
-    required_params = {
-        'Bucket',
-    },
-    all_valid_params = {
-        Bucket=true,
-        ACL=true,
-        GrantRead=true,
-        GrantReadACP=true,
-        GrantWrite=true,
-        GrantWriteACP=true,
-        GrantFullControl=true,
-        AccessControlPolicy=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        ACL=_M.parameters.ACL.schema,
+        GrantRead=_M.parameters.GrantRead.schema,
+        GrantReadACP=_M.parameters.GrantReadACP.schema,
+        GrantWrite=_M.parameters.GrantWrite.schema,
+        GrantWriteACP=_M.parameters.GrantWriteACP.schema,
+        GrantFullControl=_M.parameters.GrantFullControl.schema,
+        AccessControlPolicy=_M.parameters.AccessControlPolicy.schema,
     },
     generate_query_args = generate_acl_query_args,
     generate_headers = generate_headers_from_params,
@@ -909,11 +947,9 @@ _M.methods.put_bucket_acl = {
 _M.methods.get_bucket_acl = {
     verb = 'GET',
     generate_uri = generate_bucket_uri,
-    required_params = {
-        'Bucket',
-    },
-    all_valid_params = {
-        Bucket=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
     },
     generate_query_args = generate_acl_query_args,
     generate_headers = generate_empty_headers,
@@ -926,21 +962,19 @@ _M.methods.get_bucket_acl = {
 _M.methods.put_object_acl = {
     verb = 'PUT',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
-        ACL=true,
-        GrantRead=true,
-        GrantReadACP=true,
-        GrantWrite=true,
-        GrantWriteACP=true,
-        GrantFullControl=true,
-        AccessControlPolicy=true,
-        VersionId=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
+        ACL=_M.parameters.ACL.schema,
+        GrantRead=_M.parameters.GrantRead.schema,
+        GrantReadACP=_M.parameters.GrantReadACP.schema,
+        GrantWrite=_M.parameters.GrantWrite.schema,
+        GrantWriteACP=_M.parameters.GrantWriteACP.schema,
+        GrantFullControl=_M.parameters.GrantFullControl.schema,
+        AccessControlPolicy=_M.parameters.AccessControlPolicy.schema,
+        VersionId=_M.parameters.VersionId.schema,
     },
     generate_query_args = generate_acl_query_args,
     generate_headers = generate_headers_from_params,
@@ -953,14 +987,12 @@ _M.methods.put_object_acl = {
 _M.methods.get_object_acl = {
     verb = 'GET',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
-        VersionId=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
+        VersionId=_M.parameters.VersionId.schema,
     },
     generate_query_args = generate_acl_query_args,
     generate_headers = generate_empty_headers,
@@ -973,8 +1005,7 @@ _M.methods.get_object_acl = {
 _M.methods.list_buckets= {
     verb = 'GET',
     generate_uri = generate_service_uri,
-    required_params = {},
-    all_valid_params = {},
+    params_schema = empty_schema,
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_empty_headers,
     generate_body = generate_empty_body,
@@ -986,15 +1017,12 @@ _M.methods.list_buckets= {
 _M.download_file_model = {
     verb = 'GET',
     generate_uri = generate_object_uri,
-    required_params = {
-        'Bucket',
-        'Key',
-        'Filename',
-    },
-    all_valid_params = {
-        Bucket=true,
-        Key=true,
-        Filename=true,
+    params_schema = {
+        Bucket=tableutil.update({required=true},
+                                _M.parameters.Bucket.schema),
+        Key=tableutil.update({required=true},
+                             _M.parameters.Key.schema),
+        Filename=_M.parameters.Filename.schema,
     },
     generate_query_args = generate_empty_query_args,
     generate_headers = generate_empty_headers,

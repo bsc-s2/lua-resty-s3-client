@@ -1,3 +1,4 @@
+local arg_checker = require('arg_schema_checker')
 local aws_singer = require('resty.awsauth.aws_signer')
 local resty_sha256 = require('resty.sha256')
 local resty_string = require('resty.string')
@@ -196,9 +197,11 @@ function _M.do_client_method(self, params, method_model, opts)
                 tostring(params), type(params))
     end
 
-    local _, err, errmsg = s3_model.check_params(params, method_model)
+    local _, err, errmsg = arg_checker.check_arguments(
+            params, method_model.params_schema)
     if err ~= nil then
-        return nil, err, errmsg
+        return nil, 'InvalidArgument', string.format(
+                'invalid params: %s, %s', err, errmsg)
     end
 
     local uri, err, errmsg = method_model.generate_uri(params)
@@ -326,9 +329,18 @@ function _M.generate_presigned_url(self, method, params, opts)
                 'invalid method: %s', method)
     end
 
-    local _, err, errmsg = s3_model.check_params(params, method_model)
+    params = params or {}
+    if type(params) ~= 'table' then
+        return nil, 'InvalidArgument', string.format(
+                'invalid params: %s, is not a table, is type: %s',
+                tostring(params), type(params))
+    end
+
+    local _, err, errmsg = arg_checker.check_arguments(
+            params, method_model.params_schema)
     if err ~= nil then
-        return nil, err, errmsg
+        return nil, 'InvalidArgument', string.format(
+                'invalid params: %s, %s', err, errmsg)
     end
 
     local request = {
