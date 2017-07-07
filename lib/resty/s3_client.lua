@@ -2,7 +2,7 @@ local arg_checker = require('arg_schema_checker')
 local aws_singer = require('resty.awsauth.aws_signer')
 local resty_sha256 = require('resty.sha256')
 local resty_string = require('resty.string')
-local s2http = require('s2http')
+local httpclient = require('acid.httpclient')
 local s3_model = require('resty.s3_model')
 local xml = require('s2xml')
 
@@ -48,7 +48,7 @@ end
 
 
 function _M.do_request(self, verb, uri, headers, body)
-    local h = s2http:new(self.endpoint, 80, self.timeout)
+    local h = httpclient:new(self.endpoint, 80, self.timeout)
     h:send_request(uri, {
         method=verb,
         headers=headers,
