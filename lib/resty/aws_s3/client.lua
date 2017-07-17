@@ -3,7 +3,7 @@ local aws_singer = require('resty.awsauth.aws_signer')
 local resty_sha256 = require('resty.sha256')
 local resty_string = require('resty.string')
 local httpclient = require('acid.httpclient')
-local s3_model = require('resty.s3_model')
+local client_model = require('resty.aws_s3.client_model')
 local xml = require('s2xml')
 
 local _M = {}
@@ -37,7 +37,7 @@ function _M.new(access_key, secret_key, endpoint, client_opts)
 
     setmetatable(client, mt)
 
-    for method, method_model in pairs(s3_model.methods) do
+    for method, method_model in pairs(client_model.methods) do
         client[method] = function(self, params, opts)
             return self:do_client_method(params, method_model, opts)
         end
@@ -338,7 +338,7 @@ function _M.download_file(self, Bucket, Key, Filename, opts)
         Filename=Filename,
     }
     local resp, err, errmsg = self:do_client_method(
-            params, s3_model.download_file_model, opts)
+            params, client_model.download_file_model, opts)
     if err ~= nil then
         return nil, err, errmsg
     end
@@ -348,7 +348,7 @@ end
 
 
 function _M.generate_presigned_url(self, method, params, opts)
-    local method_model = s3_model.methods[method]
+    local method_model = client_model.methods[method]
     if method_model == nil then
         return nil, 'InvalidArgument', string.format(
                 'invalid method: %s', method)

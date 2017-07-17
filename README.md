@@ -42,7 +42,7 @@ Synopsis
     server {
         location /test {
             content_by_lua_block {
-                local s3_client = require "resty.s3_client"
+                local s3_client = require "resty.aws_s3.client"
                 local client, err, msg = s3_client.new('access_key',
                                                        'secrest_key',
                                                        's3.amazonaws.com')
