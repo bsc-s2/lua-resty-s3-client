@@ -48,11 +48,20 @@ end
 
 
 function _M.do_request(self, verb, uri, headers, body)
-    local h = httpclient:new(self.endpoint, 80, self.timeout)
-    h:send_request(uri, {
+    local h, err, errmsg = httpclient:new(self.endpoint, 80, self.timeout)
+    if err ~= nil then
+        return nil, 'NewHttpError', string.format(
+                'failed to new http client, %s, %s', err, errmsg)
+    end
+
+    local _, err, errmsg = h:send_request(uri, {
         method=verb,
         headers=headers,
     })
+    if err ~= nil then
+        return nil, 'SendRequestError', string.format(
+                'failed to send request, %s, %s', err, errmsg)
+    end
 
     if type(body) == 'table' then
         local file_path = body.file_path
@@ -68,14 +77,26 @@ function _M.do_request(self, verb, uri, headers, body)
         while s ~= nil do
             s = file_handle:read(1024 * 1024)
             if s ~= nil then
-                h:send_body(s)
+                local _, err, errmsg = h:send_body(s)
+                if err ~= nil then
+                    return nil, 'SendBodyError', string.format(
+                            'failed to send body, %s, %s', err, errmsg)
+                end
             end
         end
     else
-        h:send_body(body)
+        local _, err, errmsg = h:send_body(body)
+        if err ~= nil then
+            return nil, 'SendBodyError', string.format(
+                    'failed to send body, %s, %s', err, errmsg)
+        end
     end
 
-    h:finish_request()
+    local _, err, errmsg = h:finish_request()
+    if err ~= nil then
+        return nil, 'FinishRequestError', string.format(
+                'failed to finish request, %s, %s', err, errmsg)
+    end
 
     local read_body = function(size)
         return h:read_body(size)
