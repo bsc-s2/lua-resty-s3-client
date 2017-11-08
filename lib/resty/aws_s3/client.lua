@@ -17,9 +17,13 @@ function _M.new(access_key, secret_key, endpoint, client_opts)
                 'invalid endpoint: %s is not a string', tostring(endpoint))
     end
 
-    local signer, err, errmsg = aws_singer.new(access_key, secret_key)
-    if err ~= nil then
-        return nil, err, errmsg
+    local signer, err, errmsg
+
+    if access_key ~= nil and secret_key ~= nil then
+        signer, err, errmsg = aws_singer.new(access_key, secret_key)
+        if err ~= nil then
+            return nil, err, errmsg
+        end
     end
 
     client_opts = client_opts or {}
@@ -37,9 +41,9 @@ function _M.new(access_key, secret_key, endpoint, client_opts)
 
     setmetatable(client, mt)
 
-    for method, method_model in pairs(client_model.methods) do
+    for method, _ in pairs(client_model.methods) do
         client[method] = function(self, params, opts)
-            return self:do_client_method(params, method_model, opts)
+            return self:do_client_method(params, method, opts)
         end
     end
 
@@ -47,14 +51,32 @@ function _M.new(access_key, secret_key, endpoint, client_opts)
 end
 
 
-function _M.do_request(self, verb, uri, headers, body)
-    local h, err, errmsg = httpclient:new(self.endpoint, 80, self.timeout)
+function _M.request(self, verb, uri, headers, body)
+    local _, err, errmsg = self:send_request(verb, uri, headers)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
+
+    if body ~= nil then
+        local _, err, errmsg = self:send_body(body)
+        if err ~= nil then
+            return nil, err, errmsg
+        end
+    end
+
+    return self:finish_request()
+end
+
+function _M.send_request(self, verb, uri, headers)
+    local http, err, errmsg = httpclient:new(self.endpoint, 80, self.timeout)
     if err ~= nil then
         return nil, 'NewHttpError', string.format(
                 'failed to new http client, %s, %s', err, errmsg)
     end
 
-    local _, err, errmsg = h:send_request(uri, {
+    self.http = http
+
+    local _, err, errmsg = http:send_request(uri, {
         method=verb,
         headers=headers,
     })
@@ -62,6 +84,12 @@ function _M.do_request(self, verb, uri, headers, body)
         return nil, 'SendRequestError', string.format(
                 'failed to send request, %s, %s', err, errmsg)
     end
+
+    return nil, nil, nil
+end
+
+function _M.send_body(self, body)
+    local http = self.http
 
     if type(body) == 'table' then
         local file_path = body.file_path
@@ -77,7 +105,7 @@ function _M.do_request(self, verb, uri, headers, body)
         while s ~= nil do
             s = file_handle:read(1024 * 1024)
             if s ~= nil then
-                local _, err, errmsg = h:send_body(s)
+                local _, err, errmsg = http:send_body(s)
                 if err ~= nil then
                     return nil, 'SendBodyError', string.format(
                             'failed to send body, %s, %s', err, errmsg)
@@ -85,26 +113,32 @@ function _M.do_request(self, verb, uri, headers, body)
             end
         end
     else
-        local _, err, errmsg = h:send_body(body)
+        local _, err, errmsg = http:send_body(body)
         if err ~= nil then
             return nil, 'SendBodyError', string.format(
                     'failed to send body, %s, %s', err, errmsg)
         end
     end
 
-    local _, err, errmsg = h:finish_request()
+    return nil, nil, nil
+end
+
+function _M.finish_request(self)
+    local http = self.http
+
+    local _, err, errmsg = http:finish_request()
     if err ~= nil then
         return nil, 'FinishRequestError', string.format(
                 'failed to finish request, %s, %s', err, errmsg)
     end
 
     local read_body = function(size)
-        return h:read_body(size)
+        return http:read_body(size)
     end
 
     local resp = {
-        status = h.status,
-        headers = h.headers,
+        status = http.status,
+        headers = http.headers,
         body = {
             read=read_body,
         },
@@ -203,15 +237,27 @@ local function parse_error(body)
 end
 
 
-function _M.get_signed_request(self, params, method_model, opts)
+function _M.get_signed_request(self, params, method, opts)
+    local method_model, err, errmsg = self:get_method_model(method)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
+
+    local _, err, errmsg = self:check_method_args(params, method_model)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
+
     local uri, err, errmsg = method_model.generate_uri(params)
     if err ~= nil then
         return nil, err, errmsg
     end
+
     local args, err, errmsg = method_model.generate_query_args(params)
     if err ~= nil then
         return nil, err, errmsg
     end
+
     local headers, err, errmsg = method_model.generate_headers(params)
     if err ~= nil then
         return nil, err, errmsg
@@ -255,25 +301,31 @@ function _M.get_signed_request(self, params, method_model, opts)
         if sign_payload == true then
             request.headers['X-Amz-Content-SHA256'] = body.content_sha256
         end
-    else
+    elseif body ~= nil then
         request.body = body
         request.headers['Content-Length'] = #body
     end
 
-    local auth_ctx, err, errmsg = self.signer:add_auth_v4(
-            request, {sign_payload=sign_payload})
-    if err ~= nil then
-        return nil, err, errmsg
+    if self.signer ~= nil then
+        local auth_ctx, err, errmsg = self.signer:add_auth_v4(
+                request, {sign_payload=sign_payload})
+        if err ~= nil then
+            return nil, err, errmsg
+        end
+        request.auth_ctx = auth_ctx
+        request.signer = self.signer
     end
-
     request.body = body
-    request.auth_ctx = auth_ctx
 
     return request, nil, nil
 end
 
+local function parse_http_response(self, resp, params, method)
+    local method_model, err, errmsg = self:get_method_model(method)
+    if err ~= nil then
+        return nil, err, errmsg
+    end
 
-local function parse_http_response(resp, params, method_model, auth_ctx)
     if resp.status ~= method_model.status_code then
         local resp_body, err, errmsg = resp.body.read(1024 * 1024)
         if err ~= nil then
@@ -287,14 +339,7 @@ local function parse_http_response(resp, params, method_model, auth_ctx)
                     err, errmsg)
         end
 
-        local extra_message = ''
-        if resp.status == 403 then
-            extra_message = string.format(
-                    ' client canonical request: %s, hex: %s',
-                    auth_ctx.canonical_request,
-                    resty_string.to_hex(auth_ctx.canonical_request))
-        end
-        return nil, error_info.code, error_info.message .. extra_message
+        return nil, error_info.code, error_info.message
     end
 
     local response, err, errmsg = method_model.parse_response(resp, params)
@@ -305,8 +350,31 @@ local function parse_http_response(resp, params, method_model, auth_ctx)
     return response, nil, nil
 end
 
+function _M.get_method_model(self, method)
+    if method == 'download_file' then
+        return client_model.download_file_model
+    end
 
-function _M.do_client_method(self, params, method_model, opts)
+    local method_model = client_model.methods[method]
+    if method_model == nil then
+        return nil, 'NoSupportMethod', method
+    end
+
+    return method_model
+end
+
+function _M.check_method_args(self, params, method_model)
+    local _, err, errmsg = arg_checker.check_arguments(
+            params, method_model.params_schema)
+    if err ~= nil then
+        return nil, 'InvalidArgument', string.format(
+                'invalid params: %s, %s', err, errmsg)
+    end
+
+    return true
+end
+
+function _M.do_client_method(self, params, method, opts)
     opts = opts or {}
     if type(opts) ~= 'table' then
         return nil, 'InvalidArgument', string.format(
@@ -321,20 +389,13 @@ function _M.do_client_method(self, params, method_model, opts)
                 tostring(params), type(params))
     end
 
-    local _, err, errmsg = arg_checker.check_arguments(
-            params, method_model.params_schema)
-    if err ~= nil then
-        return nil, 'InvalidArgument', string.format(
-                'invalid params: %s, %s', err, errmsg)
-    end
-
     local request, err, errmsg = self:get_signed_request(
-            params, method_model, opts)
+            params, method, opts)
     if err ~= nil then
         return nil, err, errmsg
     end
 
-    local resp, err, errmsg = self:do_request(request.verb,
+    local resp, err, errmsg = self:request(request.verb,
                                               request.uri,
                                               request.headers,
                                               request.body)
@@ -342,8 +403,8 @@ function _M.do_client_method(self, params, method_model, opts)
         return nil, err, errmsg
     end
 
-    local response, err, errmsg = parse_http_response(
-            resp, params, method_model, request.auth_ctx)
+    local response, err, errmsg = parse_http_response(self,
+            resp, params, method)
     if err ~= nil then
         return nil, err, errmsg
     end
@@ -359,7 +420,7 @@ function _M.download_file(self, Bucket, Key, Filename, opts)
         Filename=Filename,
     }
     local resp, err, errmsg = self:do_client_method(
-            params, client_model.download_file_model, opts)
+            params, 'download_file', opts)
     if err ~= nil then
         return nil, err, errmsg
     end

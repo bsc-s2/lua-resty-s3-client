@@ -138,7 +138,9 @@ end
 
 local function generate_upload_body(params)
     local body = params.Body
-    if type(body) == 'string' then
+    if body == nil then
+        return nil
+    elseif type(body) == 'string' then
         return body, nil, nil
     end
 
@@ -799,7 +801,7 @@ _M.methods.put_object = {
                                 _M.parameters.Bucket.schema),
         Key=tableutil.update({required=true},
                              _M.parameters.Key.schema),
-        Body=tableutil.update({required=true},
+        Body=tableutil.update({required=false},
                                _M.parameters.Body.schema),
         ACL=_M.parameters.ACL.schema,
         ContentType=_M.parameters.ContentType.schema,
