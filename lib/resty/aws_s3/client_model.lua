@@ -1,6 +1,6 @@
-local s2xml = require('s2xml')
 local strutil = require('acid.strutil')
 local tableutil = require('acid.tableutil')
+local acid_xml = require('acid.xml')
 local _M = {}
 
 local meta_prefix = 'x-amz-meta-'
@@ -201,7 +201,7 @@ local function generate_put_acl_body(params)
         table.insert(standared_acp.AccessControlList.Grant, standared_grant)
     end
 
-    local xml_acp, err, errmsg = s2xml.to_xml('AccessControlPolicy',
+    local xml_acp, err, errmsg = acid_xml.to_xml('AccessControlPolicy',
                                               standared_acp)
     if err ~= nil then
         return nil, 'XMLEncodeError', string.format(
@@ -326,7 +326,7 @@ local function parse_copy_object_response(http_response)
                 'failed to read response body: %s, %s', err, errmsg)
     end
 
-    local result, err, errmsg = s2xml.from_xml(body)
+    local result, err, errmsg = acid_xml.from_xml(body)
     if err ~= nil then
         return nil, 'InvalidResponseXML', string.format(
                 'the response XML is invalid: %s, %s', err, errmsg)
@@ -386,7 +386,7 @@ local function parse_list_objects_response(http_response)
                 'failed to read response body: %s, %s', err, errmsg)
     end
 
-    local result, err, errmsg = s2xml.from_xml(body)
+    local result, err, errmsg = acid_xml.from_xml(body)
     if err ~= nil then
         return nil, 'InvalidResponseXML', string.format(
                 'the response XML is invalid: %s, %s', err, errmsg)
@@ -432,7 +432,7 @@ local function parse_list_buckets_response(http_response)
                 'failed to read response body: %s, %s', err, errmsg)
     end
 
-    local result, err, errmsg = s2xml.from_xml(body)
+    local result, err, errmsg = acid_xml.from_xml(body)
     if err ~= nil then
         return nil, 'InvalidResponseXML', string.format(
                 'the response XML is invalid: %s, %s', err, errmsg)
@@ -466,7 +466,7 @@ local function parse_get_acl_response(http_response)
                 'failed to read response body: %s, %s', err, errmsg)
     end
 
-    local result, err, errmsg = s2xml.from_xml(body)
+    local result, err, errmsg = acid_xml.from_xml(body)
     if err ~= nil then
         return nil, 'InvalidResponseXML', string.format(
                 'the response XML is invalid: %s, %s', err, errmsg)

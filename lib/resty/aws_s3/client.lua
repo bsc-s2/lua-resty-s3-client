@@ -1,10 +1,10 @@
-local arg_checker = require('arg_schema_checker')
+local arg_checker = require('acid.arg_schema_checker')
 local aws_singer = require('resty.awsauth.aws_signer')
 local resty_sha256 = require('resty.sha256')
 local resty_string = require('resty.string')
 local httpclient = require('acid.httpclient')
 local client_model = require('resty.aws_s3.client_model')
-local xml = require('s2xml')
+local acid_xml = require('acid.xml')
 
 local _M = {}
 
@@ -200,7 +200,7 @@ local function parse_error(body)
     if #short_body > 512 then
         short_body = string.sub(short_body, 1, 512) .. '...'
     end
-    local error_resp, err, errmsg = xml.from_xml(body)
+    local error_resp, err, errmsg = acid_xml.from_xml(body)
     if err ~= nil then
         return nil, 'InvalidResponseError', string.format(
                 'response: %s is not a valid xml, %s, %s',
